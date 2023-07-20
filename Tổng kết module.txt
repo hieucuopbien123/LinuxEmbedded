@@ -214,7 +214,7 @@ App -> OS -> |                                          |
 App -> OS -> |Virtualization layer: [hypervisor|host OS]| -> Hardware
 App -> OS -> |                                          |
 
-->  ảo VMWare, Oracle VirtualBox => k designed for embedded system
+-> Máy ảo VMWare, Oracle VirtualBox => k designed for embedded system
 Kernel based VM => nên dùng hơn: nó ảo hóa cho phép linux kernel chạy như 1 hypervisor. VD: QEMU vì nó free, native linux, emulate machine's processor. Có thể cài QEMU như 1 software bth trên linux. 
 Tức là để cần lập trình hệ thống nhúng bằng linux thì cần phải mô phỏng môi trường của hệ thống thực cần dùng, r cài nó trên máy linux. Ở đây ta éo có máy linux. Tức ta phải dùng máy ảo chạy linux, rồi lại chạy máy ảo trên máy ảo linux để tạo môi trường cho hệ thống thực tế. VD lập trình nhúng cho máy giặt chẳng hạn thì phải mô phỏng máy giặt đó trên máy tính linux.
 
@@ -340,4 +340,48 @@ CGI script thường được viết bằng các ngôn ngữ lập trình như P
 
 CGI script đã từng là một phương pháp phổ biến để tạo ra các trang web động, nhưng hiện nay đã có nhiều công nghệ khác như PHP, ASP.NET, Node.js thay thế trong việc xây dựng ứng dụng web động. Tuy nhiên, CGI script vẫn được sử dụng trong một số trường hợp đặc biệt hoặc khi cần tích hợp với hệ thống máy chủ hiện có. 
 
+-> Init file to mount file system:
+Để build minimal linux system có 2 bước: 1 là xây kernel image là config cơ bản cần thiết để khởi động hđh, 2 là xây disk image chứa các tệp hđh thư viện chương trình ứng dụng. Disk image được sử dụng để truy cập và quản lý tài nguyên hệ thống.
+
+Đầu tiên gắn hệ thống tệp proc vào 1 thư mục gốc /proc trong hệ thống tệp gốc của linux => tệp proc chứa thông tin về process và tài nguyên hệ thống
+
+Mount sysfs filesytem vào /sys directory => tương tự nhưng sysfs chứa thông tin về phần cứng và cấu hình hệ thống.
+
+mknod /dev/ttyS0 c 4 64 => mknod để tạo 1 device file, file này cung 1 interface cho device driver để phần mềm có thể tương tác với device driver dùng standard input/output. Ở đây tạo 1 thiết bị nối tiếp (serial device) tên là ttyS0 với loại c (character device file). Character devices cung 1 stream of data mà đọc được từng ký tự at a time, nó ngược với block device là thao tác với block of data. Các thiết bị nối tiếp thường để giao tiếp với các thiết bị ngoại vi như cổng COM. 4 là major number của device file, nó nối với kernel xem device driver nào được dùng cho device file, major number 4 thg được dùng cho tty devices. 64 là minor number, nó được dùng để phân biệt giữa các devices mà devices driver quản lý, ở đây 64 biểu diễn cho device file là /dev/ttyS0
+=> Cái mknod cần thiết nếu trong hđh, user tương tác với input output qua peripheral device.
+
+setsid sh -c 'exec sh </dev/ttyS0 >/dev/ttyS0 2>&1 => setsid để chạy chương trình trong 1 session mới, tách program khỏi terminal hiện tại và tiếp tục chạy dù ta đã close terminal hiện tại; sh -c sẽ thực thi câu lệnh trong đoạn string tiếp theo ở session mới; exec sh </dev/ttyS0 >/ttyS0 2>&1 thì exec sẽ thay thế shell process hiện tại bằng 1 instance mới, sh là shell sẽ execute mới sẽ chạy, </dev/ttyS0 sẽ chuyển hướng input của sh shell tới device file /dev/ttyS0. >/ttyS0 sẽ redirect output của sh shell tới /ttyS0 (1 serial port device). 2>&1 sẽ redirect error output của sh shell tới cùng địa chỉ với output bth là /ttyS0
+
+-> Build minimal linux command:
+sudo qemu-system-x86_64 -kernel bzImage -initrd initrd.img -nographic
+=> Sau khi cài qemu, ta chạy máy ảo QEMU trên hđh linux. Ta emulate 1 full system x86 64 bits linux với kernel image là file bzImage và file initrd.img xác định RAM disk để sử dụng cho kernel. Nó là tệp hệ thống tạm thời được sử dụng trong quá trình boot, qtr boot sẽ dựa vào nó để tiếp tục tạo ra tệp hệ thống root của hđh.
+
+-> Init file cho networking: 
+ifconfig eth0 10.0.2.55 up => Có nhiều giao diện mạng khác nhau, eth0 là giao diện mạng ethernet đầu tiên. Ta cấu hình giao diện này với địa chỉ 10.0.2.55. up là tham số để kích hoạt, giao diện mạng có thể gửi và nhận dữ liệu.
+10.0.2 là private ip address space. Server và client trong môi trường độc lập có private ip address riêng thì ta đang gán để chúng tương tác với nhau. 
+
+sudo qemu-system-x86_64 -kernel bzImage -initrd initrd.img -nographic -net nic -net tap,ifname=tap0
+Lệnh tương tự để xây linux system; -net nic để tạo ra 1 card mảng ảo vào máy ảo QEMU, giúp cho máy ảo có thể kết nối mạng.
+-net tap,ifname=tap0 => Kết nối mạng card ảo với giao diện tap trong hệ thống host. Máy ảo --- Card mạng ảo --- Giao diện tap --- Mạng vật lý hệ thống host.
+
+-> Init file để start httpd server:
+httpd -p 8080 -h /home/BusyBoxWebServer/ -c /home/Config/httpd.conf
+=> Chạy server ở port 8080, host mọi file trong thư mục kia với config file trong kia.
+
+-> Script list file:
+    file_modified=$(busybox stat -c %y "$file")
+    file_modified=$(echo "$file_modified" | sed 's/\.0*$//')
+=> Lấy thời gian last modified của file và cho qua pipeline sed để remove trailling .0 trong string
+
+Cụ thể duyệt từng file trong folder và in ra thông tin. Kèm các button edit, download là ấn vào sẽ gọi tới các script .sh khác thôi
+
+Script search file:
+Chính là search trong listfile
+
+Script rename file:
+Lấy path mới và path cũ ra rồi gọi lệnh mv cơ bản
+
+Script create folder: 
+Lệnh fetch để chạy script .sh nào
+Gọi mkdir thôi
 
